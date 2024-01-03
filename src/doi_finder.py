@@ -142,7 +142,7 @@ def doi_lookup(doi):
     except:
         return ""
     
-def bibfile_process(bibfile_name):
+def bibfile_process(bibfile_name, auto_accept=False):
     parser = bibtex.Parser()
     bib_data = parser.parse_file(bibfile_name)
     bib_sorted = sorted(bib_data.entries.items(), key=lambda x: x[0])
@@ -150,6 +150,7 @@ def bibfile_process(bibfile_name):
     bibfile = codecs.open(bibfile_name, 'r', encoding='utf-8')
     file_str = "\n".join(bibfile.readlines())
     bibfile.close()
+    no_dois = []
         
     for key, value in bib_sorted[:]:
         try:
@@ -169,6 +170,8 @@ def bibfile_process(bibfile_name):
                     volume = value.fields['year']
             else:
                 print(f"Neither journal nor booktitle in entry: {title}")
+                no_dois.append(title)
+                continue
             if 'pages' in value.fields:
                 pages = value.fields['pages']
             else:
@@ -177,6 +180,7 @@ def bibfile_process(bibfile_name):
         except Exception as e:
             print(e)
             print(f"Not possible to lookup: {value}")
+            no_dois.append(title)
             continue
         print(f"Trying: {title}")
         print(f"Author: {author}")
@@ -196,19 +200,26 @@ def bibfile_process(bibfile_name):
             print(title)
             print(lookup)
             print(fuzzy_match(lookup, title))
-            if (fuzzy_match(lookup, title) >= 0.9):
+            if auto_accept:
                 file_str = insert_doi(file_str, key, doi)
             else:
-                print("Set this DOI?")
-                resp = input()
-                if resp[0] == 'y':
+                if (fuzzy_match(lookup, title) >= 0.2):
                     file_str = insert_doi(file_str, key, doi)
-                elif re.match(DOI_REGEX, resp, re.I):
-                    print("using DOI " + resp)
-                    file_str = insert_doi(file_str, key, resp)
+                else:
+                    print("Set this DOI?")
+                    resp = input()
+                    if resp[0] == 'y':
+                        file_str = insert_doi(file_str, key, doi)
+                    elif re.match(DOI_REGEX, resp, re.I):
+                        print("using DOI " + resp)
+                        file_str = insert_doi(file_str, key, resp)
             bibfile = codecs.open(bibfile_name + ".out", 'w', encoding='utf-8')
             bibfile.write(file_str)
             bibfile.close()
+        else:
+            no_dois.append(title)
+            
+        print(f"For the following titles, no DOIs have been found: {no_dois}")
 
 if __name__ == '__main__':
     #print(crossref_auth_title_to_doi("Avazpour", "Specifying model transformations by direct manipulation using concrete visual notations and interactive recommendations"))
@@ -218,4 +229,4 @@ if __name__ == '__main__':
     browser.addheaders = [('User-agent', 'Firefox')]         # Google doesn't like robots :/
     bib= input("file:")
     bibfile = "%s/%s" % ( os.getcwd(),bib) if not os.path.isfile(bib) else bib 
-    bibfile_process(bibfile)
+    bibfile_process(bibfile, auto_accept=False)
