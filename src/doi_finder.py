@@ -28,7 +28,8 @@ import sys
 import codecs
 from pybtex.database.input import bibtex
 import os
-DOI_REGEX = "doi.+(10\\.\d{4,6}/[^\"'&<% \t\n\r\f\v]+)"
+DOI_REGEX = r"doi\.org.+(10\.\d{4,6}\/[^\"'&<% \t\n\r\f\v]+)"
+
 
 
 browser = mechanize.Browser()
@@ -47,7 +48,7 @@ def detex(tex_str):
     '''
     prog = subprocess.Popen(["detex"], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE)
-    return prog.communicate(tex_str)[0]
+    return str(prog.communicate(bytes(tex_str,'utf-8'))[0], 'utf-8')
 
 def fuzzy_match(orig, sub):
     '''
@@ -69,7 +70,7 @@ def find_doi(sourcecode):
     of an HTML page.
     @param sourcecode: the sourcecode as a string.
     '''
-    return re.findall(DOI_REGEX, sourcecode, re.I)[0]
+    return re.findall(DOI_REGEX, str(sourcecode, 'ascii'), re.I)[0]
 
 def crossref_abstract_to_doi(abstract):
     browser.open("http://www.crossref.org/guestquery/")
@@ -87,15 +88,14 @@ def crossref_auth_title_to_doi(author, title):
     assert browser.viewing_html()
     browser.select_form(name="form2")
     # use only surname of first author
-    browser["auth2"] = re.sub(r'[A-Z] ', ' ',
-        re.sub(r'[^a-zA-Z0-9 ]+', ' ', author).split("and")[0])
-    browser["atitle2"] = re.sub(r'[^a-zA-Z0-9 ]+', ' ', title)
+    browser["auth2"] = author
+    browser["atitle2"] = title
     try: #I moved this        
         response = browser.submit()
-        sourcecode = response.get_data()
-    
+        sourcecode = response.get_data()    
         return find_doi(sourcecode)
-    except:
+    except Exception as e:
+        print(e)
         pass
 def google_title_to_doi(title):
     browser.open("http://scholar.google.com/")
@@ -148,48 +148,74 @@ def bibfile_process(bibfile_name):
     bib_sorted = sorted(bib_data.entries.items(), key=lambda x: x[0])
     bib_sorted = [x for x in bib_sorted if not 'doi' in x[1].fields]
     bibfile = codecs.open(bibfile_name, 'r', encoding='utf-8')
-    file_str = unicode().join(bibfile.readlines())
+    file_str = "\n".join(bibfile.readlines())
     bibfile.close()
         
     for key, value in bib_sorted[:]:
         try:
-            author = detex(value.fields['author'])
+            author = detex(value.persons['author'][0].last_names[0]) # last name of first author
             title = detex(value.fields['title'])
-            journal = value.fields['journaltitle']
-            volume = value.fields['volume']
-            pages = value.fields['pages']
-        except:
+            if 'journal' in value.fields:
+                journal = value.fields['journal']
+                if 'volume' not in value.fields:
+                    print(f"Volume missing for {title}")
+                else:
+                    volume = value.fields['volume']
+            elif 'booktitle' in value.fields:
+                journal = value.fields['booktitle']
+                if 'year' not in value.fields:
+                    print(f"Year missing for {title}")
+                else:
+                    volume = value.fields['year']
+            else:
+                print(f"Neither journal nor booktitle in entry: {title}")
+            if 'pages' in value.fields:
+                pages = value.fields['pages']
+            else:
+                print(f"Pages missing for {title}.")
+                pages = "0--0"
+        except Exception as e:
+            print(e)
+            print(f"Not possible to lookup: {value}")
             continue
+        print(f"Trying: {title}")
+        print(f"Author: {author}")
+        print(f"Journal: {journal}")
+
         doi = crossref_auth_title_to_doi(author, title)
-        if not doi:
-            if ("Appl. Phys. Lett." == journal) or ("J. Appl. Phys." == journal):
-                doi = google_aip_doi(volume, pages)
-        if not doi:
-            doi = google_doi(journal, volume, pages, title)
+        print(f"Result: {doi}")
+        # TODO not working anymore - has to be fixed
+        #if not doi:
+        #    if ("Appl. Phys. Lett." == journal) or ("J. Appl. Phys." == journal):
+        #        doi = google_aip_doi(volume, pages)
+        #if not doi:
+        #    doi = google_doi(journal, volume, pages, title)
         if doi:
             lookup = doi_lookup(doi)
-            print "{0:40s}{1}".format(key, doi)
-            print title
-            print lookup
-            print fuzzy_match(lookup, title)
+            print("{0:40s}{1}".format(key, doi))
+            print(title)
+            print(lookup)
+            print(fuzzy_match(lookup, title))
             if (fuzzy_match(lookup, title) >= 0.9):
                 file_str = insert_doi(file_str, key, doi)
             else:
-                print "Set this DOI?"
-                resp = raw_input()
+                print("Set this DOI?")
+                resp = input()
                 if resp[0] == 'y':
                     file_str = insert_doi(file_str, key, doi)
                 elif re.match(DOI_REGEX, resp, re.I):
-                    print "using DOI " + resp
+                    print("using DOI " + resp)
                     file_str = insert_doi(file_str, key, resp)
             bibfile = codecs.open(bibfile_name + ".out", 'w', encoding='utf-8')
             bibfile.write(file_str)
             bibfile.close()
 
 if __name__ == '__main__':
+    #print(crossref_auth_title_to_doi("Avazpour", "Specifying model transformations by direct manipulation using concrete visual notations and interactive recommendations"))
+    
     browser = mechanize.Browser()
     browser.set_handle_robots(False)
     browser.addheaders = [('User-agent', 'Firefox')]         # Google doesn't like robots :/
-    bib= raw_input("file:")
+    bib= input("file:")
     bibfile = "%s/%s" % ( os.getcwd(),bib) if not os.path.isfile(bib) else bib 
     bibfile_process(bibfile)
